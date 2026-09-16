@@ -1,5 +1,12 @@
 /* 플로팅 컨트롤 패널 스타일 */
 #webtoon-scroll-control-panel {
+  /* 네이버 브랜드 그린 톤. 패널 안쪽에만 스코프해서 호스트 페이지(:root)를
+     오염시키지 않는다 — 자식 요소들은 상속으로 그대로 참조할 수 있다. */
+  --wsc-green: #03c75a; /* 네이버 브랜드 그린 (포인트 색) */
+  --wsc-green-dark: #029c46; /* 강조/hover용 진한 그린 */
+  --wsc-green-tint: #eafbf0; /* 옅은 그린 배경 */
+  --wsc-green-border: #d7f2e3; /* 옅은 그린 테두리/구분선 */
+
   position: fixed;
   top: 150px;
   right: 30px;
@@ -19,14 +26,28 @@
 /* 드래그 핸들 역할을 하는 제목 영역 */
 .wsc-header {
   padding: 8px 12px;
-  background: #f3f3f3;
+  background: var(--wsc-green-tint);
+  color: #027a3d;
   font-weight: 600;
   cursor: move;
-  border-bottom: 1px solid #e2e2e2;
+  border-bottom: 1px solid var(--wsc-green-border);
 }
 
 .wsc-body {
-  padding: 10px 12px;
+  /* 세로 여백은 .wsc-control-group이 담당한다 (아래쪽만 유지, 위쪽은 첫 그룹의
+     padding-top:0과 짝을 이뤄 헤더 바로 아래 10px 여백을 만든다). */
+  padding: 10px 12px 0;
+}
+
+/* "휠 감도" / "자동 스크롤 속도" 구간을 시각적으로 나누는 묶음 */
+.wsc-control-group {
+  padding: 10px 0;
+}
+.wsc-control-group:first-child {
+  padding-top: 0;
+}
+.wsc-control-group + .wsc-control-group {
+  border-top: 1px solid var(--wsc-green-border);
 }
 
 .wsc-label {
@@ -35,7 +56,34 @@
 }
 
 .wsc-slider {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wsc-green-border, #d7f2e3);
+  cursor: pointer;
+}
+.wsc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--wsc-green, #03c75a);
+  cursor: pointer;
+}
+.wsc-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wsc-green-border, #d7f2e3);
+}
+.wsc-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--wsc-green, #03c75a);
+  border: none;
   cursor: pointer;
 }
 
@@ -44,6 +92,18 @@
   text-align: center;
   font-weight: 600;
   color: #333333;
+}
+
+/* 자동 스크롤 상태 아이콘: 정지 중엔 무채색, 작동 중엔 네이버 그린으로 강조 */
+.wsc-autoscroll-icon {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 6px;
+  color: #9aa0a6;
+}
+.wsc-autoscroll-icon.wsc-autoscroll-active {
+  color: var(--wsc-green, #03c75a);
 }
 
 /* 드래그 중 텍스트 선택 방지 */

@@ -19,10 +19,18 @@
   // ---- chrome.storage.local 키 (작품/회차 구분 없이 공통 설정) ----
   const STORAGE_KEY_SENSITIVITY = "sensitivity";
   const STORAGE_KEY_PANEL_POSITION = "panelPosition";
+  const STORAGE_KEY_AUTO_SCROLL_SPEED = "autoScrollSpeed";
 
   let sensitivity = DEFAULT_SENSITIVITY;
   let zoomFactor = 1; // Chrome 페이지 줌 배율 (background.js가 알려준다)
   let currentPanel = null; // 줌 변경 / 창 크기 변경 핸들러에서 참조
+
+  // 화살표 키 토글로 켜고 끄는 자동 스크롤 상태. sensitivity와는 완전히 독립된 값이다.
+  // on/off(autoScrollDirection)는 저장하지 않고, 속도(autoScrollSpeed)만 storage에 저장한다.
+  let autoScrollSpeed = DEFAULT_SENSITIVITY;
+  let autoScrollDirection = 0; // 0: 정지, 1: 아래로, -1: 위로
+  let autoScrollFrameId = null;
+  let autoScrollLastTimestamp = null; // 직전 tick의 timestamp (delta time 계산용)
 
   // 패널의 "화면(모니터) 기준" 위치. CSS left/top처럼 zoom에 따라 값이 변하지 않는
   // 좌표계로, zoom이 바뀔 때마다 이 값을 기준으로 CSS 좌표를 다시 계산한다.
@@ -101,7 +109,7 @@
   }
 
   // ---- 플로팅 패널 생성 ----
-  function createPanel(initialSensitivity) {
+  function createPanel(initialSensitivity, initialAutoScrollSpeed) {
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
 
@@ -111,6 +119,10 @@
 
     const body = document.createElement("div");
     body.className = "wsc-body";
+
+    // --- 휠 감도 슬라이더 ---
+    const sensitivityGroup = document.createElement("div");
+    sensitivityGroup.className = "wsc-control-group";
 
     const label = document.createElement("div");
     label.className = "wsc-label";
@@ -135,15 +147,56 @@
       chrome.storage.local.set({ [STORAGE_KEY_SENSITIVITY]: sensitivity });
     });
 
-    body.appendChild(label);
-    body.appendChild(slider);
-    body.appendChild(valueDisplay);
+    sensitivityGroup.appendChild(label);
+    sensitivityGroup.appendChild(slider);
+    sensitivityGroup.appendChild(valueDisplay);
+
+    // --- 자동 스크롤 속도 슬라이더 + 상태 아이콘 (휠 감도와는 완전히 별개의 값) ---
+    const autoScrollGroup = document.createElement("div");
+    autoScrollGroup.className = "wsc-control-group";
+
+    const autoScrollLabel = document.createElement("div");
+    autoScrollLabel.className = "wsc-label";
+    autoScrollLabel.textContent = "자동 스크롤 속도";
+
+    const autoScrollSlider = document.createElement("input");
+    autoScrollSlider.type = "range";
+    autoScrollSlider.className = "wsc-slider";
+    autoScrollSlider.min = String(MIN_SENSITIVITY);
+    autoScrollSlider.max = String(MAX_SENSITIVITY);
+    autoScrollSlider.step = String(SENSITIVITY_STEP);
+    autoScrollSlider.value = String(initialAutoScrollSpeed);
+
+    const autoScrollValueDisplay = document.createElement("div");
+    autoScrollValueDisplay.className = "wsc-value";
+    autoScrollValueDisplay.textContent = initialAutoScrollSpeed.toFixed(1) + "x";
+
+    autoScrollSlider.addEventListener("input", function (event) {
+      autoScrollSpeed = parseFloat(event.target.value);
+      autoScrollValueDisplay.textContent = autoScrollSpeed.toFixed(1) + "x";
+      chrome.storage.local.set({ [STORAGE_KEY_AUTO_SCROLL_SPEED]: autoScrollSpeed });
+    });
+
+    // 자동 스크롤 작동 상태를 아이콘으로 표시 (on/off 자체는 저장하지 않고 항상 꺼짐으로 시작)
+    const autoScrollIconEl = document.createElement("div");
+    autoScrollIconEl.className = "wsc-autoscroll-icon";
+    autoScrollIconEl.innerHTML = AUTO_SCROLL_ICON_PAUSED;
+    autoScrollIconEl.title = "자동 스크롤: 꺼짐";
+    autoScrollIconEl.setAttribute("aria-label", "자동 스크롤: 꺼짐");
+
+    autoScrollGroup.appendChild(autoScrollLabel);
+    autoScrollGroup.appendChild(autoScrollSlider);
+    autoScrollGroup.appendChild(autoScrollValueDisplay);
+    autoScrollGroup.appendChild(autoScrollIconEl);
+
+    body.appendChild(sensitivityGroup);
+    body.appendChild(autoScrollGroup);
 
     panel.appendChild(header);
     panel.appendChild(body);
     document.body.appendChild(panel);
 
-    return { panel, header };
+    return { panel, header, autoScrollIconEl };
   }
 
   // ---- 패널 드래그 이동 ----
@@ -204,29 +257,33 @@
     return event.deltaY; // DOM_DELTA_PIXEL
   }
 
-  // ---- 마우스 휠 스크롤 감도 조절 ----
-  function enableScrollControl(panel) {
-    let pendingScroll = 0; // 아직 화면에 반영되지 않고 누적된 스크롤량
-    let animationFrameId = null;
-    const EASE_FACTOR = 0.2; // 프레임마다 남은 거리의 이 비율만큼 이동
-    const REMAINING_THRESHOLD = 0.5; // 이 값보다 작아지면 한 번에 마무리
+  // ---- 부드러운 스크롤 애니메이션 (wheel과 화살표 키가 공유) ----
+  // pendingScroll: 아직 화면에 반영되지 않고 누적된 스크롤량. wheel 핸들러와
+  // 화살표 키 핸들러가 같은 변수에 더하기만 하므로, 두 입력을 섞어 써도 하나의
+  // requestAnimationFrame 루프가 끊김 없이 이어서 처리한다.
+  let pendingScroll = 0;
+  let animationFrameId = null;
+  const EASE_FACTOR = 0.2; // 프레임마다 남은 거리의 이 비율만큼 이동
+  const REMAINING_THRESHOLD = 0.5; // 이 값보다 작아지면 한 번에 마무리
 
-    // requestAnimationFrame 루프: pendingScroll이 소진될 때까지 조금씩 스크롤한다.
-    function animateScroll() {
-      if (Math.abs(pendingScroll) < REMAINING_THRESHOLD) {
-        // 남은 이동량을 그대로 적용해서 최종 이동 거리가 정확히 맞도록 마무리
-        window.scrollBy(0, pendingScroll);
-        pendingScroll = 0;
-        animationFrameId = null;
-        return;
-      }
-
-      const step = pendingScroll * EASE_FACTOR;
-      window.scrollBy(0, step);
-      pendingScroll -= step;
-      animationFrameId = requestAnimationFrame(animateScroll);
+  // requestAnimationFrame 루프: pendingScroll이 소진될 때까지 조금씩 스크롤한다.
+  function animateScroll() {
+    if (Math.abs(pendingScroll) < REMAINING_THRESHOLD) {
+      // 남은 이동량을 그대로 적용해서 최종 이동 거리가 정확히 맞도록 마무리
+      window.scrollBy(0, pendingScroll);
+      pendingScroll = 0;
+      animationFrameId = null;
+      return;
     }
 
+    const step = pendingScroll * EASE_FACTOR;
+    window.scrollBy(0, step);
+    pendingScroll -= step;
+    animationFrameId = requestAnimationFrame(animateScroll);
+  }
+
+  // ---- 마우스 휠 스크롤 감도 조절 ----
+  function enableScrollControl(panel, autoScrollIconEl) {
     window.addEventListener(
       "wheel",
       function (event) {
@@ -238,6 +295,12 @@
         // Ctrl(또는 트랙패드 핀치 제스처)과 함께 휠을 굴리면 브라우저 확대/축소 동작이므로 그대로 둔다.
         if (event.ctrlKey) {
           return;
+        }
+
+        // 자동 스크롤 중에 사용자가 휠을 굴리면 즉시 멈추고, 이 휠 입력은 막지 않은 채
+        // 그대로 아래 수동 스크롤(pendingScroll) 로직으로 이어서 처리한다.
+        if (autoScrollDirection !== 0) {
+          stopAutoScroll(autoScrollIconEl);
         }
 
         // 기본 스크롤을 막고, 감도가 적용된 이동량을 누적한다.
@@ -252,6 +315,171 @@
       },
       { passive: false } // preventDefault()를 사용하기 위해 반드시 필요
     );
+  }
+
+  // ---- 자동 스크롤 엔진 (wheel의 pendingScroll 루프와는 별개의 애니메이션 루프) ----
+  // "프레임당 고정 픽셀" 방식은 requestAnimationFrame 호출 간격(fps)이 방향마다 달라지면
+  // (예: 위로 스크롤할 때 이미지 재디코딩/리페인트 비용이 더 커서 fps가 떨어지는 경우)
+  // 화면상 이동 속도도 그대로 같이 느려진다. "초당 픽셀 × 실제 경과 시간"으로 계산해서
+  // fps가 오르내려도 px/sec가 항상 일정하게 유지되도록 한다.
+  const AUTO_SCROLL_BASE_SPEED_PX_PER_SECOND = 90; // 1.0x 기준 초당 이동 픽셀 (기존 1.5px/frame * 60fps 상당)
+  const AUTO_SCROLL_MAX_DELTA_SECONDS = 0.1; // 탭 전환 등으로 delta가 비정상적으로 커지는 것 방지
+
+  // 외부 아이콘 폰트/이미지 없이 inline SVG만 사용 (더블 셰브론 + 일시정지 막대).
+  // color는 currentColor를 참조하므로 .wsc-autoscroll-icon(.wsc-autoscroll-active)의
+  // CSS color 값으로 그린/무채색 전환이 이뤄진다.
+  const AUTO_SCROLL_ICON_DOWN =
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 6 12 11 17 6"></polyline><polyline points="7 13 12 18 17 13"></polyline></svg>';
+  const AUTO_SCROLL_ICON_UP =
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 18 12 13 17 18"></polyline><polyline points="7 11 12 6 17 11"></polyline></svg>';
+  const AUTO_SCROLL_ICON_PAUSED =
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>';
+
+  // 자동 스크롤 상태가 바뀔 때마다 아이콘 마크업 + 강조색 클래스 + 툴팁을 갱신한다.
+  function updateAutoScrollIndicator(iconEl) {
+    if (!iconEl) return;
+
+    let iconMarkup;
+    let label;
+    if (autoScrollDirection === 1) {
+      iconMarkup = AUTO_SCROLL_ICON_DOWN;
+      label = "자동 스크롤 중 (아래로)";
+    } else if (autoScrollDirection === -1) {
+      iconMarkup = AUTO_SCROLL_ICON_UP;
+      label = "자동 스크롤 중 (위로)";
+    } else {
+      iconMarkup = AUTO_SCROLL_ICON_PAUSED;
+      label = "자동 스크롤: 꺼짐";
+    }
+
+    iconEl.innerHTML = iconMarkup;
+    iconEl.classList.toggle("wsc-autoscroll-active", autoScrollDirection !== 0);
+    iconEl.title = label;
+    iconEl.setAttribute("aria-label", label);
+  }
+
+  function startAutoScroll(direction, iconEl) {
+    autoScrollDirection = direction;
+    // 델타 타임 기준 시각을 새로 잡는다. 이전 정지 시점의 timestamp가 남아있으면
+    // 그 사이 멈춰있던 시간까지 delta에 포함되어 첫 프레임에 확 튀게 된다.
+    autoScrollLastTimestamp = null;
+    updateAutoScrollIndicator(iconEl);
+
+    // 이번 이동량(px/sec * deltaSeconds)의 소수점 이하를 다음 프레임으로 이월시키는
+    // 누적치. window.scrollBy()에 소수점 값을 그대로 넘기면 브라우저가 정수 픽셀로
+    // 반올림/버림하면서 오차가 쌓일 수 있어 wheel 쪽 pendingScroll과 같은 방식으로 처리한다.
+    let pixelRemainder = 0;
+
+    if (autoScrollFrameId === null) {
+      autoScrollFrameId = requestAnimationFrame(function tick(timestamp) {
+        if (autoScrollDirection === 0) {
+          autoScrollFrameId = null;
+          autoScrollLastTimestamp = null;
+          return;
+        }
+
+        if (autoScrollLastTimestamp === null) {
+          // 시작 후 첫 프레임은 기준 시각만 기록하고 이동하지 않는다 (delta 계산 불가).
+          autoScrollLastTimestamp = timestamp;
+          autoScrollFrameId = requestAnimationFrame(tick);
+          return;
+        }
+
+        const deltaSeconds = Math.min(
+          (timestamp - autoScrollLastTimestamp) / 1000,
+          AUTO_SCROLL_MAX_DELTA_SECONDS
+        );
+        autoScrollLastTimestamp = timestamp;
+
+        pixelRemainder +=
+          AUTO_SCROLL_BASE_SPEED_PX_PER_SECOND *
+          autoScrollSpeed *
+          autoScrollDirection *
+          deltaSeconds;
+
+        const pixelsToMove = Math.trunc(pixelRemainder);
+        pixelRemainder -= pixelsToMove;
+
+        if (pixelsToMove !== 0) {
+          const beforeY = window.scrollY;
+          window.scrollBy(0, pixelsToMove);
+
+          // 문서 최상단/최하단에 도달해서 더 이상 스크롤이 안 되면 자동으로 정지한다.
+          // (이동량이 0인 프레임엔 scrollBy를 호출하지 않으므로, 그 프레임을 경계
+          // 도달로 오인하지 않도록 실제로 움직인 프레임에서만 비교한다.)
+          if (window.scrollY === beforeY) {
+            stopAutoScroll(iconEl);
+            return;
+          }
+        }
+
+        autoScrollFrameId = requestAnimationFrame(tick);
+      });
+    }
+  }
+
+  function stopAutoScroll(iconEl) {
+    autoScrollDirection = 0;
+    autoScrollLastTimestamp = null;
+    if (autoScrollFrameId !== null) {
+      cancelAnimationFrame(autoScrollFrameId);
+      autoScrollFrameId = null;
+    }
+    updateAutoScrollIndicator(iconEl);
+  }
+
+  // ---- 화살표 키(ArrowUp / ArrowDown) 자동 스크롤 토글 ----
+  function enableArrowKeyAutoScroll(panel, autoScrollIconEl) {
+    window.addEventListener("keydown", function (event) {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+        return; // 이번 범위가 아닌 키는 건드리지 않고 그대로 둔다.
+      }
+
+      // 조합키가 눌려있으면 Alt+화살표(뒤로/앞으로 가기), Shift+화살표(텍스트 선택)
+      // 등 브라우저/페이지 기본 동작을 보존한다.
+      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+
+      // 패널(슬라이더 등) 내부에서는 네이티브 화살표 키 동작(슬라이더 값 조절)이
+      // 그대로 동작해야 하므로 건드리지 않는다.
+      if (panel.contains(event.target)) {
+        return;
+      }
+
+      // 텍스트 입력 중인 요소(검색창, 댓글 입력창 등)에서는 커서 이동을 방해하지 않는다.
+      const activeElement = document.activeElement;
+      const isTextInputFocused =
+        activeElement &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.tagName === "SELECT" ||
+          activeElement.isContentEditable);
+      if (isTextInputFocused) {
+        return;
+      }
+
+      // 브라우저 기본 스크롤은 항상 막는다 (키를 누르고 있는 동안의 반복 이벤트에도 매번).
+      event.preventDefault();
+
+      // 토글 판정은 "새로 눌린 시점"에만 한 번 실행한다. OS 자동 반복(길게 누름)은 무시.
+      if (event.repeat) {
+        return;
+      }
+
+      const pressedDirection = event.key === "ArrowDown" ? 1 : -1;
+
+      if (autoScrollDirection === pressedDirection) {
+        // 같은 방향키를 다시 누름 -> 정지
+        stopAutoScroll(autoScrollIconEl);
+      } else if (autoScrollDirection === 0) {
+        // 정지 상태에서 처음 누름 -> 해당 방향으로 시작
+        startAutoScroll(pressedDirection, autoScrollIconEl);
+      } else {
+        // 반대 방향으로 작동 중일 때 다른 화살표를 누름 -> 정지만 시킨다 (바로 전환하지 않음)
+        stopAutoScroll(autoScrollIconEl);
+      }
+    });
   }
 
   // ---- Chrome 페이지 줌 대응 ----
@@ -297,11 +525,12 @@
   // ---- 초기화 ----
   // 저장된 감도/패널 위치를 먼저 불러온 뒤 그 값을 기준으로 UI를 생성한다.
   chrome.storage.local.get(
-    [STORAGE_KEY_SENSITIVITY, STORAGE_KEY_PANEL_POSITION],
+    [STORAGE_KEY_SENSITIVITY, STORAGE_KEY_PANEL_POSITION, STORAGE_KEY_AUTO_SCROLL_SPEED],
     function (stored) {
       sensitivity = clampSensitivity(stored[STORAGE_KEY_SENSITIVITY]);
+      autoScrollSpeed = clampSensitivity(stored[STORAGE_KEY_AUTO_SCROLL_SPEED]);
 
-      const { panel, header } = createPanel(sensitivity);
+      const { panel, header, autoScrollIconEl } = createPanel(sensitivity, autoScrollSpeed);
       currentPanel = panel;
 
       // 현재 탭의 zoom factor를 먼저 받아와야 CSS px <-> 화면 기준 좌표 변환이 정확하다.
@@ -329,7 +558,8 @@
       });
 
       enableDrag(panel, header);
-      enableScrollControl(panel);
+      enableScrollControl(panel, autoScrollIconEl);
+      enableArrowKeyAutoScroll(panel, autoScrollIconEl);
     }
   );
 })();
