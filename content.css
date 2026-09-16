@@ -1,4 +1,7 @@
 /* 플로팅 컨트롤 패널 스타일 */
+/* 바깥 컨테이너: 위치(fixed)/줌 스케일 계산 전용. 시각적 배경/모서리/그림자는
+   안쪽 .wsc-panel-surface가 담당한다 — overflow:hidden을 여기 두면 왼쪽으로
+   튀어나오는 도움말 탭/패널이 잘리기 때문에 이 엘리먼트에는 두지 않는다. */
 #webtoon-scroll-control-panel {
   /* 네이버 브랜드 그린 톤. 패널 안쪽에만 스코프해서 호스트 페이지(:root)를
      오염시키지 않는다 — 자식 요소들은 상속으로 그대로 참조할 수 있다. */
@@ -11,26 +14,41 @@
   top: 150px;
   right: 30px;
   width: 200px;
-  background: #ffffff;
-  border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   z-index: 2147483647; /* 항상 최상단에 노출 */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   color: #222222;
-  overflow: hidden;
   user-select: none;
   transform-origin: top left; /* Chrome 페이지 줌 상쇄용 scale의 기준점 */
 }
 
+/* 안쪽 표면: 흰 배경/둥근 모서리/그림자 + overflow:hidden(모서리 클리핑용)을
+   전부 여기서 담당한다. width:100%라 바깥 엘리먼트의 200px 폭은 그대로 유지된다. */
+.wsc-panel-surface {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
 /* 드래그 핸들 역할을 하는 제목 영역 */
 .wsc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   background: var(--wsc-green-tint);
   color: #027a3d;
   font-weight: 600;
   cursor: move;
   border-bottom: 1px solid var(--wsc-green-border);
+}
+
+/* 헤더 우측의 대각선 빗금 아이콘: "드래그로 옮길 수 있다"는 걸 시각적으로 표시 */
+.wsc-drag-indicator {
+  flex-shrink: 0;
+  color: var(--wsc-green-dark, #029c46);
 }
 
 .wsc-body {
@@ -106,8 +124,149 @@
   color: var(--wsc-green, #03c75a);
 }
 
+/* 이전화 / 다음화 버튼: 가로로 나란히 */
+.wsc-episode-nav {
+  display: flex;
+  gap: 8px;
+}
+
+/* BGM 자동 끄기 토글: 버튼 하나뿐이지만, flex 컨테이너가 있어야
+   .wsc-nav-button의 flex:1이 적용되어 그룹 폭을 꽉 채운다. 이게 없으면
+   버튼이 텍스트 크기만큼만 좁게 잡혀 왼쪽으로 치우쳐 보인다. */
+.wsc-bgm-toggle {
+  display: flex;
+}
+
+.wsc-nav-button {
+  flex: 1;
+  min-width: 0; /* 좁은 패널 폭에서 버튼이 flex 기본값 때문에 넘치지 않도록 */
+  padding: 6px 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--wsc-green, #03c75a);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+.wsc-nav-button:hover:not(:disabled) {
+  background: var(--wsc-green-dark, #029c46);
+}
+.wsc-nav-button:disabled {
+  background: #d9d9d9;
+  color: #9aa0a6;
+  cursor: default;
+}
+
 /* 드래그 중 텍스트 선택 방지 */
 .wsc-no-select,
 .wsc-no-select * {
   user-select: none !important;
+}
+
+/* 왼쪽 단축키 도움말 탭 + 패널. #webtoon-scroll-control-panel(position:fixed)이
+   containing block이라, 이 자식들은 .wsc-panel-surface의 overflow:hidden과
+   무관하게 왼쪽으로 튀어나올 수 있다. */
+.wsc-help-tab {
+  position: absolute;
+  /* top:50% + translateY(-50%)는 이 엘리먼트의 containing block인 바깥
+     #webtoon-scroll-control-panel의 전체 높이(= 보이는 카드 높이, 도움말
+     탭/패널은 position:absolute라 그 높이 계산에 영향을 안 줌) 기준으로 계산되므로
+     이미 카드 세로 중앙과 정확히 맞는다. */
+  left: -22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 40px;
+  background: var(--wsc-green, #03c75a);
+  color: #ffffff;
+  border-radius: 6px 0 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1; /* 글자 자체의 line-height가 flex 중앙 정렬을 미묘하게 밀어내는 것 방지 */
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: -2px 0 6px rgba(0, 0, 0, 0.15);
+  font-weight: 600;
+}
+
+.wsc-help-panel {
+  position: absolute;
+  right: 100%;
+  /* 탭(top:50% + translateY(-50%))과 같은 기준으로 세로 중앙 정렬해서 둘의
+     중심이 어긋나지 않게 한다. */
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 26px; /* 탭 폭만큼 여백 */
+  width: 170px;
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #333333;
+}
+.wsc-help-panel[hidden] {
+  display: none;
+}
+
+/* 우측 상단 닫기 버튼. .wsc-help-panel이 이미 position:absolute라 별도
+   position:relative 없이도 이 버튼의 containing block이 된다. */
+.wsc-help-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9aa0a6;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wsc-help-close:hover {
+  color: #555555;
+}
+
+.wsc-help-title {
+  padding-right: 18px; /* 닫기 버튼과 겹치지 않도록 */
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.wsc-help-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wsc-help-list li {
+  line-height: 1.5;
+}
+
+.wsc-help-list kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 4px;
+  margin-right: 3px; /* 화살표 방향 쌍(↑↓, ←→)처럼 kbd끼리 붙어 나올 때의 간격 */
+  border-radius: 4px;
+  background: var(--wsc-green-tint, #eafbf0);
+  border: 1px solid var(--wsc-green-border, #d7f2e3);
+  font-size: 11px;
+  text-align: center;
+}
+/* 항목 설명 텍스트 바로 앞의 마지막 kbd만 원래대로 조금 더 여유를 둔다 */
+.wsc-help-list kbd:last-of-type {
+  margin-right: 6px;
+}
+/* "/"로 이어지는 두 번째 kbd 앞에도 첫 kbd의 margin-right와 대칭이 되도록
+   여백을 줘서, "/"가 양쪽 kbd에 치우치지 않고 가운데 보이게 한다. */
+.wsc-help-list kbd + kbd {
+  margin-left: 3px;
 }
