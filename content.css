@@ -1,0 +1,53 @@
+/* 플로팅 컨트롤 패널 스타일 */
+#webtoon-scroll-control-panel {
+  position: fixed;
+  top: 150px;
+  right: 30px;
+  width: 200px;
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  z-index: 2147483647; /* 항상 최상단에 노출 */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  color: #222222;
+  overflow: hidden;
+  user-select: none;
+  transform-origin: top left; /* Chrome 페이지 줌 상쇄용 scale의 기준점 */
+}
+
+/* 드래그 핸들 역할을 하는 제목 영역 */
+.wsc-header {
+  padding: 8px 12px;
+  background: #f3f3f3;
+  font-weight: 600;
+  cursor: move;
+  border-bottom: 1px solid #e2e2e2;
+}
+
+.wsc-body {
+  padding: 10px 12px;
+}
+
+.wsc-label {
+  margin-bottom: 6px;
+  color: #555555;
+}
+
+.wsc-slider {
+  width: 100%;
+  cursor: pointer;
+}
+
+.wsc-value {
+  margin-top: 6px;
+  text-align: center;
+  font-weight: 600;
+  color: #333333;
+}
+
+/* 드래그 중 텍스트 선택 방지 */
+.wsc-no-select,
+.wsc-no-select * {
+  user-select: none !important;
+}

@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Webtoon Scroll Control",
+  "version": "1.0.0",
+  "description": "마우스 휠 스크롤 감도를 조절하는 플로팅 컨트롤러",
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://comic.naver.com/webtoon/detail*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
